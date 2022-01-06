@@ -1,9 +1,29 @@
 ﻿$computerName = "client2016"
+#This can be API or WinNT
+$method = "WinNT"
+
+#install Powershell module ActiveDirectory on Win10 and Win11
+#Add-WindowsCapability –online –Name "Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0"
 
 #please adjust paths
 $ExportPath = "$($env:SystemDrive)\temp\$($computerName).csv"
 
-$all = Get-NetLocalGroupMember -ComputerName $computerName -Method API
+
+
+
+if ($method -eq "API")
+{
+    $all = Get-NetLocalGroupMember -ComputerName $computerName -Method API    
+}
+elseif ($method -eq "WinNT")
+{
+    $all_winnt = Get-NetLocalGroupMember -ComputerName $computerName -Method WinNT
+    $all = $all_winnt | select Computername,@{name="MemberName";e={$_.AccountName}},@{"name"="type";e={if($_.IsGroup){"Group"}else{"User"}}},@{"name"="IsDomain";e={if($_.IsDomain){$true}else{$false}}},@{"name"="FromGroup";e={$_.GroupName}}
+}
+else
+{
+    write-host "Unsupported qurying method."
+}
 
 #output to screen all info from client computer
 $all | select Computername,Membername,@{"name"="type";e={if($_.IsGroup){"Group"}else{"User"}}},@{"name"="IsDomain";e={if($_.IsDomain){$true}else{$false}}},@{"name"="FromGroup";e={$_.GroupName}} | ft -AutoSize
@@ -19,27 +39,65 @@ function Get-User ($ComputerName, $MemberName, $Path)
 {
     $domain = Split-Path $MemberName -Parent
     $MemberName = Split-Path $MemberName -Leaf
-    $gr = Get-ADObject -Identity $MemberName 
+    $e = $null
+    try
+    {
+        $gr = Get-ADObject -Identity $MemberName -ErrorAction Stop -ErrorVariable e
+    }
+    catch [System.Management.Automation.ActionPreferenceStopException]
+    {
+        Throw $_.exception
+    }
+    catch
+    {
+        Throw $_.exception
+    }
+    
+    
     $type = ($gr | select -ExpandProperty objectcategory).split(",")[0].split("=")[1]
 
     if ($type -eq "Group")
     {
         $CustomObj = New-Object System.Collections.Generic.List[PSObject]
         $TextInfo = (Get-Culture).TextInfo
-        Get-ADGroupMember $MemberName  | ForEach-Object {
-        $CustomObj.Add([PSCustomObject]@{
-            ComputerName = $ComputerName
-            MemberName = "$domain\$($_.name)"
-            type = $TextInfo.ToTitleCase($_.objectClass)
-            IsDomain = $true
-            FromGroup = "$domain\$MemberName"
-         })
+        $e = $null
+        $members = $null
+        try
+        {
+            $members = Get-ADGroupMember $MemberName -ErrorAction Stop -ErrorVariable e
+        }
+        catch [System.Management.Automation.ActionPreferenceStopException]
+        {
+            Throw $_.exception
+        }
+        catch
+        {
+            Throw $_.exception
+        }
 
-         if ($_.objectClass -eq "group")
-         {
-             Get-User $ComputerName "$domain\$($_.name)" $Path
-         }
+        if ($members)
+        {
+            $count = $members | Measure-Object | select -ExpandProperty count
+            Write-Host "Found $count members in $domain\$MemberName"
+            
+            $members | ForEach-Object {
+                 $CustomObj.Add([PSCustomObject]@{
+                    ComputerName = $ComputerName
+                    MemberName = "$domain\$($_.name)"
+                    type = $TextInfo.ToTitleCase($_.objectClass)
+                    IsDomain = $true
+                    FromGroup = "$domain\$MemberName"
+                 })
 
+                 if ($_.objectClass -eq "group")
+                 {
+                     Get-User $ComputerName "$domain\$($_.name)" $Path
+                 }
+            }
+        }
+        else
+        {
+            Write-Host "No members found in $domain\$MemberName."
         }
     }
 
