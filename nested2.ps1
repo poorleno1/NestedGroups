@@ -1,4 +1,6 @@
-﻿$computerName = "client2016"
+﻿#Import-Module C:\temp\PowerSploit\PowerSploit.psm1 -Force
+
+$computerName = "client2016"
 #This can be API or WinNT
 $method = "WinNT"
 
@@ -7,6 +9,7 @@ $method = "WinNT"
 
 #please adjust paths
 $ExportPath = "$($env:SystemDrive)\temp\$($computerName).csv"
+$ExportPathRaw = "$($env:SystemDrive)\temp\$($computerName)_raw.csv"
 
 function Get-User ($ComputerName, $MemberName, $Path)
 {
@@ -28,12 +31,14 @@ function Get-User ($ComputerName, $MemberName, $Path)
     }
     
     
-    $type = ($gr | select -ExpandProperty objectcategory).split(",")[0].split("=")[1]
+    $type = ($gr | select -ExpandProperty objectcategory).split(",")[0].split("=")[1].trim()
+
+    $CustomObj = New-Object System.Collections.Generic.List[PSObject]
+    $TextInfo = (Get-Culture).TextInfo
 
     if ($type -eq "Group")
     {
-        $CustomObj = New-Object System.Collections.Generic.List[PSObject]
-        $TextInfo = (Get-Culture).TextInfo
+        
         $e = $null
         $members = $null
         Write-Host "Getting members of AD group $MemberName."
@@ -75,27 +80,35 @@ function Get-User ($ComputerName, $MemberName, $Path)
             Write-Host "No members found in $domain\$MemberName."
         }
     }
+    elseif ($type -eq "Person")
+    {
+            Write-Host "This user ($domain\$MemberName) is already added to export file. Skipping."
+    }
 
     #$CustomObj | ft -AutoSize
-    try
+    
+    if ($CustomObj)
     {
-        $CustomObj | Export-Csv -Path $($Path) -Append -NoTypeInformation
-    }
-    catch [System.Management.Automation.ActionPreferenceStopException]
-    {
-        Throw $_.exception
-    }
-    catch
-    {
-        Throw $_.exception
-    }
-    finally
-    {
-        Write-Host "cleaning up ..."
-        if (!($CustomObj))
+        try
         {
-            Write-Host "Object to be exported to CSV is empty."
+            $CustomObj | Export-Csv -Path $($Path) -Append -NoTypeInformation
         }
+        catch [System.Management.Automation.ActionPreferenceStopException]
+        {
+            Throw $_.exception
+        }
+        catch
+        {
+            Throw $_.exception
+        }
+        finally
+        {
+            Write-Host "cleaning up ..."
+            if (!($CustomObj))
+            {
+                Write-Host "Object to be exported to CSV is empty."
+            }
+        }   
     }
 }
 
@@ -116,12 +129,12 @@ else
 }
 
 #output to screen all info from client computer
-$all | select Computername,Membername,@{"name"="type";e={if($_.IsGroup){"Group"}else{"User"}}},@{"name"="IsDomain";e={if($_.IsDomain){$true}else{$false}}},@{"name"="FromGroup";e={$_.GroupName}} | ft -AutoSize
+$all | select Computername,Membername,type,IsDomain,FromGroup | ft -AutoSize
 
 #initial export to csv 
-$all | select Computername,Membername,@{"name"="type";e={if($_.IsGroup){"Group"}else{"User"}}},@{"name"="IsDomain";e={if($_.IsDomain){$true}else{$false}}},@{"name"="FromGroup";e={$_.GroupName}} | Export-Csv $ExportPath -NoTypeInformation
+$all | select Computername,Membername,type,IsDomain,FromGroup | Export-Csv $ExportPath -NoTypeInformation
 
 #further analysis of domain groups and users as Get-NetLocalGroupMember is wrongly analyzing some groups
-$all | select Computername,Membername,@{"name"="type";e={if($_.IsGroup){"Group"}else{"User"}}},@{"name"="IsDomain";e={if($_.IsDomain){$true}else{$false}}},@{"name"="FromGroup";e={$_.GroupName}} | Where-Object IsDomain | ForEach-Object {Get-User $_.Computername $_.Membername $ExportPath}
-
-
+$all | select Computername,Membername,type,IsDomain,FromGroup | Where-Object IsDomain | ForEach-Object {Get-User $_.Computername $_.Membername $ExportPath}
+$all | select Computername,Membername,type,IsDomain,FromGroup  | Export-Csv $ExportPathRaw -NoTypeInformation
+#$all | Export-Csv $ExportPathRaw -NoTypeInformation
